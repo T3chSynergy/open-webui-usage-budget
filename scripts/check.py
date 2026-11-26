@@ -24,6 +24,7 @@ from owui_lib import (  # noqa: E402
     discover_extensions,
     discover_models,
 )
+from sync_core import outdated  # noqa: E402
 
 REQUIRED_FRONTMATTER = ("title", "version", "description", "required_open_webui_version")
 VERSION_PATTERN = re.compile(r"^\d+\.\d+\.\d+$")
@@ -84,6 +85,11 @@ def check(root: Path = ROOT) -> tuple[list[str], list[str]]:
         if shared:
             errors.append(f"{where}: importiert {', '.join(shared)} aus dem Repo. Open WebUI lädt jede Datei einzeln; "
                           "gemeinsamer Code muss in die Datei kopiert werden.")
+
+    # Kopien des gemeinsamen Kerns (shared/) müssen dem Original entsprechen
+    for path, name in outdated(root):
+        errors.append(f"{path.relative_to(root).as_posix()}: Block „{name}“ weicht von shared/{name}.py ab; "
+                      "python scripts/sync_core.py ausführen.")
 
     # Modelle
     known_ids = {ext.id: ext.kind for ext in extensions}
