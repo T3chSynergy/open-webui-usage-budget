@@ -6,7 +6,8 @@ Socket.IO und beantwortet die Dialoge, die die Erweiterungen dort öffnen:
 
 - Begründungsdialog des Budget-Filters (Abbrechen sperrt, eine Antwort gilt für den Tag),
 - Dialog der Aktion „Verbrauch“ und Statuszeile der Verbrauchsanzeige,
-- Admin-Tools mit echten Daten, für Nicht-Admins „Zugriff verweigert“.
+- Admin-Tools mit echten Daten, für Nicht-Admins „Zugriff verweigert“,
+- die geschriebenen Dateien: Buchungszeilen, Begründung, Rechte, keine Klarnamen.
 
 Tools laufen über die Pipe e2e/tool_runner_pipe.py, die das Tool ohne
 Sprachmodell aufruft. Die Grenzen des Anwenders stehen im Abschnitt users von
@@ -20,6 +21,10 @@ import threading
 import time
 import uuid
 from pathlib import Path
+
+import re
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 import socketio
@@ -167,8 +172,10 @@ def book(api: OpenWebUI, prompt_tokens: int, completion_tokens: int, session_id=
          "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens}},
     ]
     stored = api.post("/api/v1/chats/new", {"chat": {"title": "E2E-Anwender", "models": ["echo"], "messages": messages}})
-    api.post("/api/chat/completed", {"model": "echo", "messages": messages, "chat_id": stored["id"],
-                                     "session_id": session_id, "id": answer, "filter_ids": list(filter_ids)})
+    form = {"model": "echo", "messages": messages, "chat_id": stored["id"],
+            "session_id": session_id, "id": answer, "filter_ids": list(filter_ids)}
+    api.post("/api/chat/completed", form)
+    return form
 
 
 def test_self_service_tool_reports_own_limits(setup):
@@ -265,9 +272,65 @@ def test_admin_tools_refuse_regular_users(setup):
 
 
 def test_user_is_blocked_at_individual_hard_limit(setup):
-    book(setup["user"], 0, 2_500_000)  # 2,5 Mio. × 0,4 € = 1 € → Obergrenze erreicht
+    setup["last_booking"] = book(setup["user"], 0, 2_500_000)  # 2,5 Mio. × 0,4 € = 1 € → Obergrenze erreicht
     assert own_budget(setup["user"])["state"] == "limit_reached"
     with pytest.raises(ApiError) as info:
         ask(setup, "Frage über der Obergrenze")
     assert "Nutzungslimit" in str(info.value) and "Obergrenze: 1,0000 €" in str(info.value)
     assert setup["browser"].dialogs("input")[3:] == []  # an der Obergrenze kein Dialog mehr
+
+
+LINE = re.compile(r"^(\d+),(\d+),(\d+),(\d+),(\d+),(\d+),(\d+),([^,]+),k:([0-9a-f]{16}),OK$")
+
+
+def test_files_are_written_correctly(client, setup):
+    # Dieselbe Antwort ein zweites Mal gemeldet (z. B. erneutes Speichern) → keine neue Zeile.
+    setup["user"].post("/api/chat/completed", setup["last_booking"])
+
+    answer = client.post("/api/chat/completions", {
+        "model": RUNNER, "stream": False,
+        "messages": [{"role": "user", "content": json.dumps({"read_data_dir": True})}],
+    })
+    data = json.loads(answer["choices"][0]["message"]["content"])
+    assert "files" in data, data
+    files = data["files"]
+    day = datetime.now(ZoneInfo(CONFIG["timezone_name"])).strftime("%Y-%m-%d")
+    csv_name, justification_name = f"{PSEUDONYM}_{day}.csv", f"{PSEUDONYM}_{day}_justification.json"
+    assert csv_name in files and justification_name in files, sorted(files)
+    assert f"{PSEUDONYM}_profile.json" not in files  # Begründungsvorschlag standardmäßig aus
+
+    # Tagesdatei: Gesamtstand, Kosten, Tokens (Eingabe, gecacht, Cache-Write, Ausgabe), Zeit, Modell, Schlüssel.
+    rows = [LINE.match(line) for line in files[csv_name]["content"].splitlines()]
+    assert all(rows), files[csv_name]["content"]
+    fields = [tuple(int(v) for v in row.groups()[:7]) for row in rows]
+    expected = [  # (Gesamt, Kosten, Eingabe, gecacht, Cache-Write, Ausgabe)
+        (600, 600, 2000, 0, 0, 1000),
+        (700, 100, 1000, 0, 0, 0),
+        (1_000_700, 1_000_000, 0, 0, 0, 2_500_000),
+    ]
+    assert [f[:6] for f in fields] == expected
+    started = int(time.time()) - 3600
+    assert all(started <= f[6] <= time.time() + 5 for f in fields)
+    assert all(row.group(8) == "echo [default-price]" for row in rows), [row.group(8) for row in rows]
+    assert len({row.group(9) for row in rows}) == 3  # ein eigener Buchungsschlüssel je Antwort
+
+    # Begründung: Text, Zeitpunkt und Stand bei Abgabe.
+    record = json.loads(files[justification_name]["content"])
+    assert record["reason"] == REASON and record["reused_unchanged"] is False
+    assert record["total_micro_eur_at_grant"] == 600
+    assert record["threshold_micro_eur"] == 500 and record["hard_limit_micro_eur"] == 1_000_000
+    assert started <= record["granted_at"] <= time.time() + 5
+
+    # Nur Kennungen, keine Klarnamen; Dateien nur für den Dienst lesbar.
+    for name, entry in files.items():
+        assert EMAIL not in entry["content"] and NAME not in entry["content"], name
+        assert entry["mode"] == "0o600", (name, entry["mode"])
+    assert data["directory_mode"] == "0o700"
+
+
+def test_data_dir_reader_is_admin_only(setup):
+    answer = setup["user"].post("/api/chat/completions", {
+        "model": RUNNER, "stream": False,
+        "messages": [{"role": "user", "content": json.dumps({"read_data_dir": True})}],
+    })
+    assert json.loads(answer["choices"][0]["message"]["content"]) == {"error": "admin-only"}
