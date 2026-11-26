@@ -18,6 +18,7 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/). Die Versio
 ### Tests
 
 - E2E-Test mit einem normalen Anwender und einer Socket.IO-Verbindung wie die Weboberfläche (`e2e/test_interaktion.py`): Begründungsdialog (Abbrechen sperrt, zu kurze Angabe, einmal je Tag), Dialog der Aktion „Verbrauch“, Statuszeile der Verbrauchsanzeige, Selbstauskunft, Admin-Tools mit echten Daten, „Zugriff verweigert“ für Nicht-Admins Sperre an der individuellen Obergrenze sowie Inhalt und Rechte der geschriebenen Tages- und Begründungsdateien. Tools laufen dabei über die Test-Pipe `e2e/tool_runner_pipe.py` ohne Sprachmodell.
+- E2E-Test mit simuliertem Sprachmodell (`e2e/test_modell.py`, Test-Pipe `e2e/fake_llm_pipe.py`): gestreamte Antwort mit Usage über den Chatweg der Weboberfläche, Buchung durch Open WebUI selbst, gecachte Tokens, Tool-Aufruf durch das Modell mit Buchung beider Modellaufrufe.
 - Workflows laufen nur mit Leserecht auf den Code (`permissions: contents: read`, Hinweis von CodeQL).
 
 ### Geändert gegenüber der Referenz

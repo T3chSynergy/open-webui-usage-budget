@@ -1,6 +1,7 @@
 """End-to-End-Test der Dialoge und Auswertungen mit einem normalen Anwender.
 
-Läuft wie test_smoke.py nur gegen eine Wegwerf-Instanz (siehe e2e/run.sh).
+Läuft wie test_smoke.py nur gegen eine Wegwerf-Instanz (siehe e2e/run.sh); Anwender,
+Test-Pipes und Freigaben legt die Fixture environment in e2e/conftest.py an.
 Der Test legt einen Anwender an, verbindet sich wie die Weboberfläche über
 Socket.IO und beantwortet die Dialoge, die die Erweiterungen dort öffnen:
 
@@ -14,35 +15,20 @@ Sprachmodell aufruft. Die Grenzen des Anwenders stehen im Abschnitt users von
 e2e/usage_budget/usage_budget_config.json (Schwellenwert 0,0005 €, Obergrenze 1 €).
 """
 
-import hashlib
 import json
-import secrets
-import threading
 import time
-import uuid
-from pathlib import Path
-
-import re
-from datetime import datetime
-from zoneinfo import ZoneInfo
 
 import pytest
-import socketio
-from conftest import BUDGET_FILTER, URL, set_global
+from conftest import URL
+from e2e_helpers import (ACCESS_DENIED, ACTION, CONFIG, LINE, RUNNER, TOGGLE, USERS, Browser, new_id, own_budget,
+                         pseudonym, read_data_dir, run_tool, today)
 from owui_lib import ApiError, OpenWebUI
 
-HERE = Path(__file__).resolve().parent
-CONFIG = json.loads((HERE / "usage_budget" / "usage_budget_config.json").read_text(encoding="utf-8"))
-
-RUNNER = "e2e_tool_runner"
-ACTION = "usage_display_action"
-TOGGLE = "usage_display_toggle"
-EMAIL = "e2e-anwender@example.org"
-NAME = "E2E Anwender"
-PSEUDONYM = hashlib.sha256(f"email:{EMAIL}{CONFIG['salt']}".encode()).hexdigest()[:16]
+EMAIL = USERS["anwender"]["email"]
+NAME = USERS["anwender"]["name"]
+PSEUDONYM = pseudonym(EMAIL)
 REASON = "E2E: synthetischer Test des Begründungsdialogs, erwarteter Nutzen ausreichend beschrieben."
 
-SELF_TOOL = "mein_nutzungsbudget"
 ADMIN_CALLS = [
     ("verbrauchsauswertung_aggregiert", "verbrauch_aggregiert_anzeigen", {}),
     ("modellverbrauch_administration", "modellverbrauch_anzeigen", {}),
@@ -52,112 +38,25 @@ ADMIN_CALLS = [
     ("pseudonymisierte_benutzerkennung_aufloesen", "kennung_berechnen", {"email": EMAIL}),
     ("pseudonymisierte_benutzerkennung_aufloesen", "pseudonym_aufloesen", {"pseudonym": PSEUDONYM}),
 ]
-ACCESS_DENIED = "## Zugriff verweigert"
 
 
-def test_pseudonym_matches_e2e_config():
-    assert PSEUDONYM in CONFIG["users"], "Kennung des Testanwenders fehlt in e2e/usage_budget/usage_budget_config.json"
-
-
-class Browser:
-    """Socket.IO-Verbindung wie die Weboberfläche; beantwortet Dialoge aus einer Warteschlange."""
-
-    def __init__(self, token: str):
-        self.received: list[dict] = []
-        self.answers: list = []
-        self._lock = threading.Lock()
-        self.sio = socketio.Client(reconnection=False)
-        self.sio.on("events", self._on_event)
-        self.sio.connect(URL, socketio_path="/ws/socket.io", auth={"token": token},
-                         transports=["websocket"], wait_timeout=30)
-
-    @property
-    def session_id(self) -> str:
-        return self.sio.get_sid()
-
-    def _on_event(self, payload):
-        event = (payload or {}).get("data") or {}
-        with self._lock:
-            self.received.append(event)
-            if event.get("type") in ("input", "confirmation"):
-                return self.answers.pop(0) if self.answers else False
-        return None
-
-    def dialogs(self, kind: str) -> list[dict]:
-        with self._lock:
-            return [e.get("data") or {} for e in self.received if e.get("type") == kind]
-
-    def close(self):
-        self.sio.disconnect()
-
-
-def grant(user_id: str) -> list[dict]:
-    return [{"principal_type": "user", "principal_id": user_id, "permission": "read"}]
+def test_pseudonyms_match_e2e_config():
+    for person in USERS.values():
+        assert pseudonym(person["email"]) in CONFIG["users"], f"Kennung von {person['email']} fehlt in der E2E-Konfiguration"
 
 
 @pytest.fixture(scope="module")
-def setup(client, deployed):
-    """Anwender, Tool-Runner, Freigaben; Budget-Filter und Aktion global."""
-    created = client.post("/api/v1/auths/add", {
-        "name": NAME, "email": EMAIL, "password": secrets.token_urlsafe(24), "role": "user",
-    })
-    user = OpenWebUI(URL, created["token"], timeout=120)
-    user_id = created["id"]
-
-    client.post("/api/v1/functions/create", {
-        "id": RUNNER, "name": "E2E Tool Runner",
-        "content": (HERE / "tool_runner_pipe.py").read_text(encoding="utf-8"),
-        "meta": {"description": "Nur für den End-to-End-Test"},
-    })
-    if not client.get(f"/api/v1/functions/id/{RUNNER}").get("is_active"):
-        client.post(f"/api/v1/functions/id/{RUNNER}/toggle")
-
-    # Basismodelle ohne Eintrag sind nur für Admins nutzbar; Einträge mit Freigabe anlegen.
-    for model_id, name in (("echo", "Echo"), (RUNNER, "E2E Tool Runner")):
-        client.post("/api/v1/models/create", {
-            "id": model_id, "base_model_id": None, "name": name,
-            "meta": {"description": "E2E"}, "params": {}, "access_grants": grant(user_id),
-        })
-    # Auch die Admin-Tools werden freigegeben: Die Sperre muss im Tool selbst greifen.
-    for tool_id in {SELF_TOOL} | {tool for tool, _, _ in ADMIN_CALLS}:
-        client.post(f"/api/v1/tools/id/{tool_id}/access/update", {"access_grants": grant(user_id)})
-
-    valves = client.get(f"/api/v1/functions/id/{BUDGET_FILTER}/valves") or {}
-    client.post(f"/api/v1/functions/id/{BUDGET_FILTER}/valves/update", {**valves, "budget_blacklist": RUNNER})
-    filter_before = set_global(client, BUDGET_FILTER, True)
-    action_before = set_global(client, ACTION, True)
-    toggle_before = set_global(client, TOGGLE, True)
-
-    browser = Browser(created["token"])
-    user.get("/api/models")  # Modellliste mit den neuen Freigaben laden
-    yield {"user": user, "browser": browser}
-
+def setup(environment):
+    user = environment["anwender"]
+    browser = Browser(URL, user["token"])
+    yield {"user": user["api"], "browser": browser}
     browser.close()
-    set_global(client, TOGGLE, toggle_before)
-    set_global(client, ACTION, action_before)
-    set_global(client, BUDGET_FILTER, filter_before)
-    client.post(f"/api/v1/functions/id/{BUDGET_FILTER}/valves/update", valves)
-
-
-def run_tool(api: OpenWebUI, tool_id: str, function: str, **args) -> str:
-    answer = api.post("/api/chat/completions", {
-        "model": RUNNER, "stream": False, "tool_ids": [tool_id],
-        "messages": [{"role": "user", "content": json.dumps({"function": function, "args": args})}],
-    })
-    return answer["choices"][0]["message"]["content"]
-
-
-def own_budget(api: OpenWebUI) -> dict:
-    text = run_tool(api, SELF_TOOL, "get_my_usage_budget")
-    result = json.loads(text)
-    assert result.get("status") == "ok", text
-    return result
 
 
 def ask(setup, text: str) -> str:
     """Anfrage wie aus der Weboberfläche: mit Socket-Sitzung, damit Dialoge ankommen."""
     answer = setup["user"].post("/api/chat/completions", {
-        "model": "echo", "stream": False, "session_id": setup["browser"].session_id, "id": str(uuid.uuid4()),
+        "model": "echo", "stream": False, "session_id": setup["browser"].session_id, "id": new_id(),
         "messages": [{"role": "user", "content": text}],
     })
     return answer["choices"][0]["message"]["content"]
@@ -165,7 +64,7 @@ def ask(setup, text: str) -> str:
 
 def book(api: OpenWebUI, prompt_tokens: int, completion_tokens: int, session_id="e2e", filter_ids=()):
     """Antwort mit synthetischer Provider-Usage buchen lassen (wie nach einer echten Antwort)."""
-    question, answer = str(uuid.uuid4()), str(uuid.uuid4())
+    question, answer = new_id(), new_id()
     messages = [
         {"id": question, "role": "user", "content": "Frage"},
         {"id": answer, "role": "assistant", "content": "Antwort",
@@ -222,7 +121,7 @@ def test_usage_action_dialog(setup):
     browser = setup["browser"]
     browser.answers = [True]
     setup["user"].post(f"/api/chat/actions/{ACTION}", {
-        "model": "echo", "chat_id": None, "id": str(uuid.uuid4()), "session_id": browser.session_id,
+        "model": "echo", "chat_id": None, "id": new_id(), "session_id": browser.session_id,
         "messages": [{"role": "user", "content": "Frage"}, {"role": "assistant", "content": "Antwort"}],
     })
     shown = [d for d in browser.dialogs("confirmation") if d.get("title") == "Ihr Verbrauch heute"]
@@ -280,21 +179,13 @@ def test_user_is_blocked_at_individual_hard_limit(setup):
     assert setup["browser"].dialogs("input")[3:] == []  # an der Obergrenze kein Dialog mehr
 
 
-LINE = re.compile(r"^(\d+),(\d+),(\d+),(\d+),(\d+),(\d+),(\d+),([^,]+),k:([0-9a-f]{16}),OK$")
-
-
 def test_files_are_written_correctly(client, setup):
     # Dieselbe Antwort ein zweites Mal gemeldet (z. B. erneutes Speichern) → keine neue Zeile.
     setup["user"].post("/api/chat/completed", setup["last_booking"])
 
-    answer = client.post("/api/chat/completions", {
-        "model": RUNNER, "stream": False,
-        "messages": [{"role": "user", "content": json.dumps({"read_data_dir": True})}],
-    })
-    data = json.loads(answer["choices"][0]["message"]["content"])
-    assert "files" in data, data
+    data = read_data_dir(client)
     files = data["files"]
-    day = datetime.now(ZoneInfo(CONFIG["timezone_name"])).strftime("%Y-%m-%d")
+    day = today()
     csv_name, justification_name = f"{PSEUDONYM}_{day}.csv", f"{PSEUDONYM}_{day}_justification.json"
     assert csv_name in files and justification_name in files, sorted(files)
     assert f"{PSEUDONYM}_profile.json" not in files  # Begründungsvorschlag standardmäßig aus

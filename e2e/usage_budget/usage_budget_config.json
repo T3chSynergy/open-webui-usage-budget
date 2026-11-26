@@ -5,6 +5,15 @@
   "hard_limit_eur": 0.0005,
   "timezone_name": "Europe/Berlin",
   "users": {
-    "9099e193617ead1b": {"threshold_eur": 0.0005, "hard_limit_eur": 1.0, "note": "E2E-Testanwender e2e-anwender@example.org"}
+    "9099e193617ead1b": {
+      "threshold_eur": 0.0005,
+      "hard_limit_eur": 1.0,
+      "note": "E2E-Testanwender e2e-anwender@example.org"
+    },
+    "3c2964f43a0554c8": {
+      "threshold_eur": 1.0,
+      "hard_limit_eur": 2.0,
+      "note": "E2E-Modellnutzer e2e-modell@example.org"
+    }
   }
 }
