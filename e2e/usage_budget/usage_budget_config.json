@@ -1,0 +1,8 @@
+{
+  "data_dir": "/tmp/usage_budget_e2e",
+  "salt": "E2E-ONLY-DO-NOT-USE-IN-PRODUCTION",
+  "threshold_eur": 0.0005,
+  "hard_limit_eur": 0.0005,
+  "timezone_name": "Europe/Berlin",
+  "users": {}
+}

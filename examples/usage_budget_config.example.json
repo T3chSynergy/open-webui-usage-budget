@@ -1,0 +1,14 @@
+{
+  "data_dir": "/app/backend/data/usage_budget/data",
+  "salt": "DEMO-ONLY-DO-NOT-USE-IN-PRODUCTION",
+  "threshold_eur": 0.5,
+  "hard_limit_eur": 1.0,
+  "timezone_name": "Europe/Berlin",
+  "users": {
+    "0123456789abcdef": {
+      "threshold_eur": 1.5,
+      "hard_limit_eur": 3.0,
+      "note": "Beispiel: abweichende Grenzen für eine Kennung"
+    }
+  }
+}

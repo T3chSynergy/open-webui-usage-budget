@@ -7,4 +7,5 @@ cd "$(dirname "$0")/.."
 docker compose -f e2e/docker-compose.yml up -d --wait
 trap 'docker compose -f e2e/docker-compose.yml down -v' EXIT
 
-OWUI_URL="${OWUI_URL:-http://localhost:3000}" uv run pytest e2e -v
+USAGE_BUDGET_ADMIN_BASE_MODEL="${USAGE_BUDGET_ADMIN_BASE_MODEL:-echo}" \
+  OWUI_URL="${OWUI_URL:-http://localhost:3000}" uv run pytest e2e -v

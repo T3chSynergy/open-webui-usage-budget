@@ -9,3 +9,12 @@ __pycache__/
 
 # Lokale Testinstanz
 e2e/data/
+
+# Nutzungsbudget: produktive Konfiguration und Laufzeitdaten nie committen
+/persistent/
+/usage_budget/
+/data/
+/usage_budget_config.json
+*_justification.json
+*_profile.json
+/*.csv

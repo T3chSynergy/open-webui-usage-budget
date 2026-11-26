@@ -1,0 +1,30 @@
+{
+  "id": "usage-budget-admin",
+  "name": "Verbrauchsauswertung (Admin)",
+  "base_model_id": "${USAGE_BUDGET_ADMIN_BASE_MODEL}",
+  "meta": {
+    "description": "Aggregierte Auswertung der KI-Nutzung für Administratoren. Nur für berechtigte Admins freigeben.",
+    "capabilities": {
+      "file_upload": false,
+      "web_search": false,
+      "image_generation": false,
+      "code_interpreter": false,
+      "citations": false,
+      "status_updates": true,
+      "usage": true
+    },
+    "toolIds": [
+      "verbrauchsauswertung_aggregiert"
+    ],
+    "tags": [
+      {
+        "name": "nutzungsbudget"
+      }
+    ]
+  },
+  "params": {
+    "temperature": 0.1,
+    "function_calling": "native"
+  },
+  "is_active": true
+}

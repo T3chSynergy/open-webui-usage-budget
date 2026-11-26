@@ -18,7 +18,7 @@ def test_repository_passes_check():
 
 
 def copy_repo(tmp_path):
-    for folder in ("tools", "functions", "models"):
+    for folder in ("tools", "functions", "models", "shared"):
         shutil.copytree(ROOT / folder, tmp_path / folder)
     return tmp_path
 
@@ -28,21 +28,24 @@ def test_check_finds_convention_violations(tmp_path):
     (root / "tools" / "Falscher-Name.py").write_text('"""\ntitle: X\n"""\nclass Tools:\n    pass\n', encoding="utf-8")
     (root / "functions" / "actions" / "doppelt.py").write_text(
         '"""\ntitle: D\nversion: 1.0\ndescription: d\nrequired_open_webui_version: 0.13.0\n"""\n'
-        "from text_statistik import statistik\nclass Action:\n    pass\nclass Pipe:\n    pass\n",
+        "from mein_nutzungsbudget import Tools\nclass Action:\n    pass\nclass Pipe:\n    pass\n",
         encoding="utf-8",
     )
-    model = json.loads((root / "models/beispiel-assistent/model.json").read_text(encoding="utf-8"))
+    model = json.loads((root / "models/usage-budget-admin/model.json").read_text(encoding="utf-8"))
     model["user_id"] = "123"
     model["params"]["system"] = "inline"
     model["meta"]["toolIds"].append("gibt_es_nicht")
-    (root / "models/beispiel-assistent/model.json").write_text(json.dumps(model), encoding="utf-8")
+    (root / "models/usage-budget-admin/model.json").write_text(json.dumps(model), encoding="utf-8")
+    core = root / "tools" / "mein_nutzungsbudget.py"
+    core.write_text(core.read_text(encoding="utf-8").replace("CORE_VERSION =", "CORE_VERSION_ALT ="), encoding="utf-8")
 
     errors, warnings = check.check(root)
     text = "\n".join(errors)
     assert "Falscher-Name" in text and "Kopfzeile „version:“ fehlt" in text
     assert "version „1.0“" in text
     assert "enthält zusätzlich Pipe" in text
-    assert "importiert text_statistik" in text
+    assert "importiert mein_nutzungsbudget" in text
+    assert "tools/mein_nutzungsbudget.py: Block „usage_budget_core“ weicht" in text
     assert "instanzbezogene Felder entfernen: user_id" in text
     assert "params.system" in text
     assert any("gibt_es_nicht" in w for w in warnings)
@@ -56,15 +59,28 @@ def test_placeholders():
         owui_lib.resolve_placeholders("${FEHLT}", env)
 
 
-def test_build_model_form_reads_prompt_and_defaults(monkeypatch):
-    monkeypatch.delenv("BEISPIEL_BASISMODELL", raising=False)
-    [model] = [m for m in owui_lib.discover_models() if m.id == "beispiel-assistent"]
+def test_build_model_form_reads_prompt_and_placeholder(monkeypatch):
+    monkeypatch.delenv("USAGE_BUDGET_ADMIN_BASE_MODEL", raising=False)
+    [model] = [m for m in owui_lib.discover_models() if m.id == "usage-budget-admin"]
+    with pytest.raises(KeyError):
+        owui_lib.build_model_form(model)  # Basismodell muss je Instanz gesetzt werden
+    monkeypatch.setenv("USAGE_BUDGET_ADMIN_BASE_MODEL", "demo-provider.text-small")
     form = owui_lib.build_model_form(model)
-    assert form["base_model_id"] == "echo"
-    assert form["params"]["system"].startswith("Du bist ein Beispiel-Assistent")
-    assert form["meta"]["filterIds"] == ["datum_einfuegen"]
-    monkeypatch.setenv("BEISPIEL_BASISMODELL", "gpt-x")
-    assert owui_lib.build_model_form(model)["base_model_id"] == "gpt-x"
+    assert form["base_model_id"] == "demo-provider.text-small"
+    assert form["params"]["system"].startswith("Du erstellst ausschließlich")
+    assert form["meta"]["toolIds"] == ["verbrauchsauswertung_aggregiert"]
+
+
+def test_sync_core_updates_stale_copies(tmp_path):
+    import sync_core
+
+    root = copy_repo(tmp_path)
+    target = root / "tools" / "mein_nutzungsbudget.py"
+    original = target.read_text(encoding="utf-8")
+    target.write_text(original.replace("CORE_VERSION =", "CORE_VERSION_ALT ="), encoding="utf-8")
+    assert [p.name for p, _ in sync_core.outdated(root)] == ["mein_nutzungsbudget.py"]
+    assert sync_core.sync(root) == [target]
+    assert target.read_text(encoding="utf-8") == original and sync_core.outdated(root) == []
 
 
 def test_export_strips_instance_data():

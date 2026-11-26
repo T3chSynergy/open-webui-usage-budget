@@ -1,7 +1,8 @@
 name: E2E gegen Open WebUI
 
 # Lädt das Open-WebUI-Image (mehrere GB). Deshalb nicht bei jedem Push,
-# sondern von Hand, wöchentlich und bei Änderungen an e2e/ oder scripts/.
+# sondern von Hand, wöchentlich und bei Pull Requests, die Erweiterungen,
+# Modelle, e2e/ oder scripts/ ändern.
 on:
   workflow_dispatch:
   schedule:
@@ -10,6 +11,10 @@ on:
     paths:
       - "e2e/**"
       - "scripts/**"
+      - "shared/**"
+      - "tools/**"
+      - "functions/**"
+      - "models/**"
 
 jobs:
   e2e:
@@ -23,6 +28,7 @@ jobs:
       - name: Einspielen und testen
         env:
           OWUI_URL: http://localhost:3000
+          USAGE_BUDGET_ADMIN_BASE_MODEL: echo
         run: uv run pytest e2e -v
       - name: Protokoll bei Fehler
         if: failure()

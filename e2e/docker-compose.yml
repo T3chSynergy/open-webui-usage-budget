@@ -18,6 +18,10 @@ services:
       ANONYMIZED_TELEMETRY: "False"
       DO_NOT_TRACK: "True"
       SCARF_NO_ANALYTICS: "True"
+      # Synthetische Budget-Konfiguration für den Test (winzige Grenzen)
+      USAGE_BUDGET_CONFIG: "/usage_budget/usage_budget_config.json"
+    volumes:
+      - ./usage_budget:/usage_budget:ro
     tmpfs:
       - /app/backend/data
     healthcheck:

@@ -1,136 +1,141 @@
-# Open-WebUI-Erweiterungen – Vorlage
+# Nutzungsbudget für Open WebUI
 
-Vorlage für Repos, in denen wir Erweiterungen für [Open WebUI](https://openwebui.com) pflegen: Tools, Funktionen (Aktionen, Filter, Pipes) und Modelle mit System-Prompt. Das Repo ist die Quelle; ein Skript spielt alles in eine Open-WebUI-Instanz ein, ein zweites holt Änderungen aus Open WebUI zurück.
+Kostenkontrolle für [Open WebUI](https://openwebui.com): Die Erweiterungen erfassen die Token-Nutzung, die der Provider meldet, rechnen sie mit konfigurierbaren Tarifen in Euro um und setzen ein **Tagesbudget je Benutzer** durch. Ab einem Schwellenwert beschreibt der Anwender einmal am Tag den erwarteten Nutzen, an der Obergrenze ist für den Tag Schluss. Anwender sehen ihren eigenen Stand, Administratoren erhalten Auswertungen je Modell, je Anwender und je Zeitraum, standardmäßig nur mit pseudonymisierten Kennungen.
 
-Getestet mit Open WebUI 0.13.3.
+Getestet mit Open WebUI 0.13.3. Alle Daten in diesem Repo sind synthetisch; Beispielpreise sind fiktiv.
 
-## Neues Repo aus der Vorlage
-
-1. Auf GitHub **Use this template → Create a new repository**.
-2. Die Beispiele löschen oder umbauen: `tools/text_statistik.py`, `functions/*/…`, `models/beispiel-assistent/`, die passenden Tests in `tests/` und, falls nicht gebraucht, die Pipe `echo` (sie dient auch dem E2E-Test).
-3. In der README dieses Abschnitts den Zweck des neuen Repos beschreiben.
-
-## Aufbau
+## Was passiert bei einer Anfrage?
 
 ```
-tools/                     Tools – ein Tool pro Datei
-functions/actions/         Aktionen – Buttons unter einer Antwort
-functions/filters/         Filter – verändern Anfrage oder Antwort
-functions/pipes/           Pipes – erscheinen als eigenes Modell
-models/<id>/model.json     Modell: Basismodell, Parameter, zugeordnete Tools/Aktionen/Filter
-models/<id>/system-prompt.md   System-Prompt des Modells
-tests/                     Unit-Tests, laden die Dateien direkt
-e2e/                       Test gegen eine echte Open-WebUI-Instanz (Docker)
-scripts/check.py           prüft die Konventionen
-scripts/deploy.py          Repo → Open WebUI
-scripts/export.py          Open WebUI → Repo
+Anwender ──► inlet()  Budget-Filter ── Tagesstand lesen
+                 │      ≥ Obergrenze  → gesperrt bis Mitternacht
+                 │      ≥ Schwellenwert, noch keine Begründung → Dialog „Erwarteter Nutzen“
+                 │      sonst: stream_options.include_usage = true
+                 ▼
+             Modell / Provider  ── liefert Antwort und Usage (Tokens)
+                 ▼
+         outlet()  Budget-Filter ── Kosten berechnen, unter Dateisperre buchen
+                 ▼
+         outlet()  Verbrauchsanzeige (optional) ── Statuszeile unter der Antwort
 ```
 
-## Konventionen
+Geprüft wird **vor**, gebucht wird **nach** der Anfrage. Die letzte erlaubte Anfrage kann die Obergrenze deshalb überschreiten (Details und Alternativen in [docs/entscheidungen.md](docs/entscheidungen.md)).
 
-- **Dateiname = ID in Open WebUI.** Kleinbuchstaben, Ziffern und `_`, z. B. `tools/text_statistik.py` → ID `text_statistik`. Die ID nach dem ersten Einspielen nicht mehr ändern: Modelle verweisen darauf.
-- **Ein Plugin pro Datei, ohne Importe aus dem Repo.** Open WebUI lädt jede Datei einzeln. Gemeinsamen Code in die jeweilige Datei kopieren; `scripts/check.py` meldet Importe aus dem Repo.
-- **Kopfzeilen** am Dateianfang, beginnend mit `"""` in Zeile 1:
+## Komponenten
 
-  ```
-  """
-  title: Anzeigename
-  author: T3chSynergy
-  version: 1.2.3
-  required_open_webui_version: 0.13.0
-  description: Ein Satz, was die Erweiterung tut.
-  requirements: paket1, paket2      (optional)
-  licence: MIT
-  """
-  ```
+| Datei | Art | Aufgabe | Für wen |
+| --- | --- | --- | --- |
+| `functions/filters/provider_usage_budget_daily.py` | Filter | Prüfen, Begründung abfragen, Kosten buchen | alle Modelle (global) |
+| `functions/filters/usage_display_toggle.py` | Filter (Schalter) | Statuszeile mit dem Tagesstand, nicht im Nachrichtentext | optional, alle |
+| `functions/actions/usage_display_action.py` | Aktion | Button „Verbrauch“ unter einer Antwort, Dialog mit dem eigenen Stand | optional, alle |
+| `tools/mein_nutzungsbudget.py` | Tool | `get_my_usage_budget`: Selbstauskunft für das Modell, ohne frei wählbare Benutzer-ID | optional, alle |
+| `tools/modellverbrauch_administration.py` | Tool | Kosten und Tokens je Modell, Anwender je Modell | nur Admins |
+| `tools/tagesbudgets_administration_tool.py` | Tool | Tages- und Zeitraumübersicht je Anwender, Detailansicht | nur Admins |
+| `tools/verbrauchsauswertung_aggregiert.py` | Tool | nur aggregierter Modellverbrauch, keine Kennungen | nur Admins |
+| `tools/pseudonymisierte_benutzerkennung_aufloesen.py` | Tool | Kennung ↔ Benutzer (Suche, Berechnung, Auflösung) | optional, nur Admins |
+| `models/usage-budget-admin/` | Modell | Auswertungsmodell, bindet nur das Aggregat-Tool | nur Admins |
+| `shared/usage_budget_core.py` | Kern | gemeinsame Logik, wird in jede Erweiterung kopiert | – |
 
-  Bei jeder Änderung `version` anheben. Pakete aus `requirements` auch in `pyproject.toml` unter `dev` eintragen, damit die Tests sie finden.
-- **Genau eine Plugin-Klasse pro Datei**: `Tools` in `tools/`, `Action`, `Filter` oder `Pipe` in `functions/…`. Enthält eine Datei mehrere, erkennt Open WebUI die Art falsch.
-- **Modelle** liegen in `models/<id>/`. Der System-Prompt steht in `system-prompt.md`, nicht in `model.json`. Instanzbezogene Felder (`user_id`, `access_grants`, Zeitstempel) gehören nicht ins Repo.
-- **Platzhalter** in `model.json`: `${VAR}` oder `${VAR:-Standard}` werden beim Einspielen aus der Umgebung oder `.env` ersetzt. So kann das Basismodell je Instanz verschieden sein, ohne die Datei zu ändern.
+Die Dateinamen sind die IDs in Open WebUI und entsprechen der Referenzinstallation, aus der diese Lösung entstanden ist. Wer von dort umsteigt, behält damit Valves und Modellzuordnungen.
 
-## Valves und Zugangsdaten
+## Schnellstart
 
-Valves sind die Einstellungen einer Erweiterung in Open WebUI. Im Code stehen nur unkritische Standardwerte. API-Keys, Passwörter und interne Adressen trägt die Administration in Open WebUI ein; sie kommen nie ins Repo.
+1. **Konfiguration anlegen.** `examples/usage_budget_config.example.json` auf den Open-WebUI-Server kopieren, z. B. nach `/app/backend/data/usage_budget/usage_budget_config.json` (im Docker-Image liegt `DATA_DIR` unter `/app/backend/data` und damit im persistenten Volume). Dann:
+   - `salt` durch einen eigenen geheimen Zufallswert ersetzen, z. B. `python -c "import secrets; print(secrets.token_hex(32))"`. **Den Demo-Salt nie produktiv verwenden.**
+   - `threshold_eur`, `hard_limit_eur`, `timezone_name` und `data_dir` setzen; `users` leeren oder mit eigenen Kennungen füllen.
+   - Rechte einschränken: `chmod 600` für die Datei, `chmod 700` für das Verzeichnis.
+2. **Erweiterungen einspielen**, entweder mit `scripts/deploy.py` (siehe unten) oder von Hand im Open-WebUI-Editor (Inhalt der Datei einfügen, ID = Dateiname).
+3. **Preise eintragen.** Im Budget-Filter das Valve `model_prices_json` mit den eigenen Tarifen füllen (Euro je eine Million Tokens, Aufbau wie `examples/model_prices.example.json`). Der Standardwert enthält nur fiktive Preise.
+4. **Budget-Filter global schalten** (Admin → Funktionen → ⋯ → Global) oder gezielt in den Modellen zuordnen.
+5. Optional Verbrauchsanzeige, Aktion und `mein_nutzungsbudget` für alle freigeben; Admin-Tools und das Modell `usage-budget-admin` nur für eine Admin-Gruppe. Admin-Tools **nie global** freischalten.
 
-`deploy.py` ändert keine Valves und keine Zugriffsrechte bestehender Einträge. `export.py` schreibt keine Valves ins Repo.
+Liegt die Konfiguration anderswo, das Valve `config_file` in **allen** Budget-Erweiterungen gleich setzen oder die Umgebungsvariable `USAGE_BUDGET_CONFIG` setzen. Ohne gültige Konfiguration oder Preise sperrt der Budget-Filter (fail closed).
 
-## Lokal testen
+Schritt für Schritt mit allen Valves: [docs/betrieb.md](docs/betrieb.md).
+
+## Konfiguration
+
+Gemeinsame Datei (alle Komponenten lesen dieselbe; Änderungen gelten ohne Neustart):
+
+```json
+{
+  "data_dir": "/app/backend/data/usage_budget/data",
+  "salt": "DEMO-ONLY-DO-NOT-USE-IN-PRODUCTION",
+  "threshold_eur": 0.5,
+  "hard_limit_eur": 1.0,
+  "timezone_name": "Europe/Berlin",
+  "users": {
+    "0123456789abcdef": {"threshold_eur": 1.5, "hard_limit_eur": 3.0, "note": "Projekt X"}
+  }
+}
+```
+
+`users` enthält abweichende Grenzen je pseudonymisierter Kennung. Die Kennung zu einer E-Mail-Adresse liefert das Tool `kennung_berechnen` oder:
 
 ```bash
+python -c "import hashlib,sys; print(hashlib.sha256(('email:'+sys.argv[1].strip().lower()+sys.argv[2]).encode()).hexdigest()[:16])" alice@example.org 'DEIN-SALT'
+```
+
+Preise (Valve `model_prices_json` im Budget-Filter): exakte Modell-IDs vor Wildcards (in JSON-Reihenfolge) vor `_default`. Bei Workspace-Modellen zählt das Basismodell. Je Tarif `input` und `output` (Pflicht), `cached_input`, `cache_write`, `long_context_threshold` und `long` (optional).
+
+## Datenschutz in Kürze
+
+- Dateien und Auswertungen verwenden eine **pseudonymisierte Kennung** (16 Hex-Zeichen aus SHA-256 von E-Mail und Salt). Das ist ein Pseudonym, keine Anonymisierung: Wer den Salt kennt, kann zuordnen.
+- Namen, E-Mail-Adressen und Freitextbegründungen gelangen **standardmäßig nicht** in Tool-Ergebnisse und damit nicht an das Modell. Freigabe je Tool über die Valves `allow_name_resolution` und `show_justification_text`.
+- Admin-Rechte werden serverseitig in der Open-WebUI-Benutzerdatenbank geprüft, nicht über Prompt oder Parameter.
+- Der gespeicherte Vorschlag der letzten Begründung ist standardmäßig aus (`remember_last_justification`).
+- Laufzeitdaten (`*.csv`, `*_justification.json`, `*_profile.json`) und die produktive Konfiguration gehören nicht ins Repo und nicht zu einem externen LLM. Aufbewahrung: siehe [docs/betrieb.md](docs/betrieb.md#aufbewahrung-und-löschung).
+
+## Unterschiede zur Referenz
+
+Die Lösung behält den fachlichen Ablauf, die IDs, das Pseudonymverfahren und das Dateiformat der Referenzinstallation bei. Geändert wurde, was für eine allgemeine, veröffentlichte Lösung nötig ist; die wichtigsten Punkte:
+
+- **Admin-Prüfung aktiv.** In der bereinigten Referenz waren die Prüfungen auskommentiert; jetzt erhalten Nicht-Admins in allen Admin-Funktionen nur „Zugriff verweigert“.
+- **Keine verlorenen oder doppelten Buchungen.** Buchen unter Dateisperre; ein Buchungsschlüssel verhindert Doppelbuchungen derselben Antwort. Neue Zeilen haben dafür ein zusätzliches Feld.
+- **Fail closed bei ungültigen Preisen**, Buchungsfehler werden protokolliert statt verschluckt.
+- **Datensparsame Voreinstellungen** für Namen, Begründungstexte und den Begründungsvorschlag.
+
+Vollständige Liste mit Begründungen und Migrationshinweisen: [docs/entscheidungen.md](docs/entscheidungen.md).
+
+## Entwicklung
+
+```
+shared/usage_budget_core.py   gemeinsamer Kern (einzige Stelle zum Ändern)
+tools/, functions/            Adapter für Open WebUI, enthalten je eine Kopie des Kerns
+models/<id>/                  Modell (model.json + system-prompt.md)
+examples/                     Beispielkonfiguration und fiktive Preise
+tests/                        Unit-Tests mit synthetischen Daten, tests/fixtures/
+e2e/                          Test gegen eine echte Open-WebUI-Instanz (Docker)
+scripts/sync_core.py          Kern in alle Erweiterungen kopieren
+scripts/check.py              Konventionen und Kern-Kopien prüfen
+scripts/deploy.py, export.py  Repo ↔ Open WebUI
+```
+
+Open WebUI lädt jede Datei einzeln; Importe aus dem Repo sind nicht möglich. Deshalb steht der Kern in `shared/` und wird zwischen den Markierungen `# >>> usage_budget_core >>>` und `# <<< usage_budget_core <<<` in jede Erweiterung kopiert. Nach einer Änderung am Kern:
+
+```bash
+uv run python scripts/sync_core.py
 uv run python scripts/check.py
-```
-
-```bash
 uv run pytest
 ```
 
-Die Tests laden jede Erweiterung so, wie Open WebUI es tut, und rufen sie direkt auf. `tests/conftest.py` enthält dafür `load_extension()` und einen `emitter`, der gesendete Ereignisse sammelt.
+`check.py` meldet Kopien, die vom Kern abweichen. Bei jeder inhaltlichen Änderung `version` im Kopf der betroffenen Dateien anheben und `CHANGELOG.md` ergänzen. Weitere Konventionen (Kopfzeilen, eine Plugin-Klasse je Datei, Platzhalter in `model.json`) stehen in [docs/vorlage.md](docs/vorlage.md).
 
-## In Open WebUI einspielen
+### In Open WebUI einspielen
 
-Einmalig `.env.example` nach `.env` kopieren und `OWUI_URL` sowie `OWUI_API_KEY` eintragen. Der Key muss zu einem Admin-Konto gehören (Einstellungen → Konto → API-Schlüssel).
+`.env.example` nach `.env` kopieren, `OWUI_URL`, `OWUI_API_KEY` (Admin-Konto) und `USAGE_BUDGET_ADMIN_BASE_MODEL` (Basismodell des Auswertungsmodells) eintragen.
 
 ```bash
 uv run python scripts/deploy.py --dry-run
-```
-
-```bash
 uv run python scripts/deploy.py
 ```
 
-Das Skript prüft zuerst mit `check.py`, legt fehlende Einträge an, aktualisiert geänderte und überspringt unveränderte. Funktionen werden aktiviert. In der Änderungshistorie von Open WebUI steht dabei `deploy <git-Stand>`. Mit `--only <id>` lassen sich einzelne Einträge einspielen.
+Das Skript legt fehlende Einträge an, aktualisiert geänderte und lässt Valves, Freigaben und den Global-Schalter unverändert. Mit `--only <id>` einzelne Einträge.
 
-Neue Einträge sehen zunächst nur Admins. Freigaben für Gruppen setzt die Administration in Open WebUI; sie bleiben bei späteren Deploys erhalten. Ob eine Funktion „global“ für alle Modelle gilt, entscheidet ebenfalls die Administration. Besser ist, sie in `model.json` gezielt zuzuordnen.
+### End-to-End-Test
 
-## Änderungen aus Open WebUI zurückholen
-
-Wurde etwas direkt in Open WebUI geändert:
-
-```bash
-uv run python scripts/export.py
-```
-
-Das holt alle Einträge, die es im Repo schon gibt. Mit `--only <id>` oder `--all` kommen auch neue dazu. Dateien mit nicht committeten Änderungen werden nur mit `--force` überschrieben, und Platzhalter in `model.json` bleiben erhalten, solange ihr Wert zu Open WebUI passt. Danach `git diff` prüfen und committen.
-
-## End-to-End-Test
-
-Startet eine frische Open-WebUI-Instanz in Docker, spielt das Repo ein und prüft:
-
-- Einspielen ist wiederholbar.
-- Tools, Funktionen und Modelle werden erkannt.
-- Eine Chat-Anfrage läuft durch System-Prompt, Filter und Pipe.
-- Die Aktion speichert ihre Karte im Chat.
-
-```bash
-e2e/run.sh
-```
-
-Gegen eine schon laufende Testinstanz:
-
-```bash
-OWUI_URL=http://localhost:3000 uv run pytest e2e
-```
-
-Nie gegen die produktive Instanz laufen lassen: Der Test spielt alles ein und legt Test-Chats an.
-
-Die Open-WebUI-Version steht fest in `e2e/docker-compose.yml`. Vor einem Update der produktiven Instanz dort anheben und den Test laufen lassen.
-
-## GitHub Actions
-
-- `tests.yml`: Prüfung und Unit-Tests bei jedem Push auf `main` und jedem Pull Request.
-- `e2e.yml`: End-to-End-Test von Hand, wöchentlich und bei Änderungen an `e2e/` oder `scripts/`. Er lädt das Open-WebUI-Image (mehrere GB) und braucht einige Minuten.
-
-## Beispiele
-
-| Datei | Art | Zeigt |
-| --- | --- | --- |
-| `tools/text_statistik.py` | Tool | Methode mit Docstring als Beschreibung für das Modell, Valves |
-| `functions/actions/textstatistik_anzeigen.py` | Aktion | Meldung und eingebettete HTML-Karte, Höhe per `iframe:height` |
-| `functions/filters/datum_einfuegen.py` | Filter | `inlet()` ergänzt den System-Prompt |
-| `functions/pipes/echo.py` | Pipe | Testmodell ohne Sprachmodell; zeigt, was beim Modell ankommt |
-| `models/beispiel-assistent/` | Modell | Basismodell als Platzhalter, Zuordnung von Tool, Aktion und Filter |
+`e2e/run.sh` startet eine Wegwerf-Instanz in Docker mit der synthetischen Konfiguration aus `e2e/usage_budget/`, spielt alles ein und prüft unter anderem, dass eine Antwort mit Usage genau einmal gebucht und die nächste Anfrage an der Obergrenze gesperrt wird. **Nie gegen eine produktive Instanz laufen lassen.** In GitHub Actions läuft er wöchentlich, von Hand und bei Pull Requests, die Erweiterungen ändern.
 
 ## Lizenz
 
-MIT, siehe [LICENSE](LICENSE). Fremdbibliotheken, die eine Erweiterung einbettet, mit eigener Lizenzdatei unter `vendor/<name>/<version>/` ablegen.
+MIT, siehe [LICENSE](LICENSE).
