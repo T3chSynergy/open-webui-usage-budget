@@ -8,23 +8,11 @@ schaltet den Budget-Filter global und legt Test-Chats an.
     USAGE_BUDGET_ADMIN_BASE_MODEL=echo OWUI_URL=http://localhost:3000 uv run pytest e2e
 """
 
-import os
-import sys
-import time
-import urllib.request
 import uuid
-from pathlib import Path
 
 import pytest
-
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "scripts"))
-
-from deploy import deploy  # noqa: E402
-from owui_lib import ApiError, OpenWebUI, discover_extensions, discover_models, signin_without_auth  # noqa: E402
-
-URL = os.environ.get("OWUI_URL", "http://localhost:3000").rstrip("/")
-BUDGET_FILTER = "provider_usage_budget_daily"
+from conftest import BUDGET_FILTER, set_global
+from owui_lib import ApiError, discover_extensions, discover_models
 
 EXPECTED_SPECS = {
     "mein_nutzungsbudget": {"get_my_usage_budget": []},
@@ -36,34 +24,6 @@ EXPECTED_SPECS = {
         "pseudonym_aufloesen": ["pseudonym"], "pseudonyme_aufloesen": ["kennungen"],
     },
 }
-
-
-def wait_until_healthy(timeout=240):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            with urllib.request.urlopen(URL + "/health", timeout=5) as response:
-                if response.status == 200:
-                    return
-        except OSError:
-            pass
-        time.sleep(2)
-    pytest.fail(f"Open WebUI unter {URL} antwortet nicht.")
-
-
-@pytest.fixture(scope="module")
-def client():
-    wait_until_healthy()
-    os.environ.setdefault("USAGE_BUDGET_ADMIN_BASE_MODEL", "echo")
-    key = os.environ.get("OWUI_API_KEY") or signin_without_auth(URL)
-    return OpenWebUI(URL, key, timeout=120)
-
-
-@pytest.fixture(scope="module")
-def deployed(client):
-    first = deploy(client, log=lambda *_: None)
-    second = deploy(client, log=lambda *_: None)
-    return first, second
 
 
 def test_deploy_is_idempotent(deployed):
@@ -109,12 +69,9 @@ def test_action_is_offered_and_toggle_is_detected(client, deployed):
 
 @pytest.fixture
 def global_budget_filter(client, deployed):
-    state = client.get(f"/api/v1/functions/id/{BUDGET_FILTER}")
-    if not state.get("is_global"):
-        client.post(f"/api/v1/functions/id/{BUDGET_FILTER}/toggle/global")
+    before = set_global(client, BUDGET_FILTER, True)
     yield
-    if client.get(f"/api/v1/functions/id/{BUDGET_FILTER}").get("is_global"):
-        client.post(f"/api/v1/functions/id/{BUDGET_FILTER}/toggle/global")
+    set_global(client, BUDGET_FILTER, before)
 
 
 def chat(client, text):

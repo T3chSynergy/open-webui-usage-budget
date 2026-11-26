@@ -12,6 +12,8 @@ dependencies = []
 dev = [
     "pytest>=8",
     "pydantic>=2",
+    # nur für e2e/: Socket.IO-Verbindung wie die Weboberfläche, um Dialoge zu beantworten
+    "python-socketio[client]>=5.11",
 ]
 
 [tool.pytest.ini_options]
