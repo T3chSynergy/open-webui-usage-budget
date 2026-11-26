@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+# Nur Lesezugriff auf den Code; die Jobs schreiben nichts nach GitHub.
+permissions:
+  contents: read
+
 jobs:
   tests:
     runs-on: ubuntu-latest

@@ -16,6 +16,10 @@ on:
       - "functions/**"
       - "models/**"
 
+# Nur Lesezugriff auf den Code; die Jobs schreiben nichts nach GitHub.
+permissions:
+  contents: read
+
 jobs:
   e2e:
     runs-on: ubuntu-latest

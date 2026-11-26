@@ -134,7 +134,14 @@ Das Skript legt fehlende Einträge an, aktualisiert geänderte und lässt Valves
 
 ### End-to-End-Test
 
-`e2e/run.sh` startet eine Wegwerf-Instanz in Docker mit der synthetischen Konfiguration aus `e2e/usage_budget/`, spielt alles ein und prüft unter anderem, dass eine Antwort mit Usage genau einmal gebucht und die nächste Anfrage an der Obergrenze gesperrt wird. **Nie gegen eine produktive Instanz laufen lassen.** In GitHub Actions läuft er wöchentlich, von Hand und bei Pull Requests, die Erweiterungen ändern.
+`e2e/run.sh` startet eine Wegwerf-Instanz in Docker mit der synthetischen Konfiguration aus `e2e/usage_budget/` und spielt alles ein. Geprüft wird:
+
+- `test_smoke.py`: Einspielen ist wiederholbar, Tool-Beschreibungen ohne injizierte Parameter, eine Antwort mit Usage wird genau einmal gebucht, die nächste Anfrage an der Obergrenze gesperrt.
+- `test_interaktion.py`: ein normaler Anwender mit Socket.IO-Verbindung wie die Weboberfläche. Der Begründungsdialog erscheint am Schwellenwert, Abbrechen sperrt, eine gültige Begründung gilt für den Rest des Tages; die Aktion „Verbrauch“ öffnet ihren Dialog, die Verbrauchsanzeige sendet ihre Statuszeile; die Admin-Tools liefern mit echten Daten Kennungen, aber keine Namen oder Begründungstexte, und Nicht-Admins erhalten „Zugriff verweigert“. Die Tools ruft die Test-Pipe `e2e/tool_runner_pipe.py` direkt auf, ohne Sprachmodell.
+
+Nicht abgedeckt ist die Darstellung in der Weboberfläche selbst (wie Dialoge und Statuszeile aussehen) und ob ein echtes Sprachmodell die Tools sinnvoll aufruft.
+
+**Nie gegen eine produktive Instanz laufen lassen.** In GitHub Actions läuft er wöchentlich, von Hand und bei Pull Requests, die Erweiterungen ändern.
 
 ## Lizenz
 

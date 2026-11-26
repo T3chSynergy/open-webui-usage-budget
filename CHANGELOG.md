@@ -15,6 +15,11 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/). Die Versio
 - Beispielkonfiguration und fiktive Preise in `examples/`, synthetische Tests, E2E-Test mit Buchung und Sperre.
 - Dokumentation: README, `docs/betrieb.md`, `docs/entscheidungen.md`, `docs/vorlage.md`.
 
+### Tests
+
+- E2E-Test mit einem normalen Anwender und einer Socket.IO-Verbindung wie die Weboberfläche (`e2e/test_interaktion.py`): Begründungsdialog (Abbrechen sperrt, zu kurze Angabe, einmal je Tag), Dialog der Aktion „Verbrauch“, Statuszeile der Verbrauchsanzeige, Selbstauskunft, Admin-Tools mit echten Daten, „Zugriff verweigert“ für Nicht-Admins und Sperre an der individuellen Obergrenze. Tools laufen dabei über die Test-Pipe `e2e/tool_runner_pipe.py` ohne Sprachmodell.
+- Workflows laufen nur mit Leserecht auf den Code (`permissions: contents: read`, Hinweis von CodeQL).
+
 ### Geändert gegenüber der Referenz
 
 - Admin-Prüfung in allen Admin-Funktionen aktiv (war auskommentiert).
